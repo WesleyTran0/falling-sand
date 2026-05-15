@@ -1,0 +1,6 @@
+[workspace]
+resolver = "2"
+members = ["libs/simulation", "app"]
+
+[workspace.dependencies]
+# shared deps go here later, e.g. once you pick a windowing crate
