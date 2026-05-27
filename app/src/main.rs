@@ -1,6 +1,6 @@
 use minifb::{Key, MouseButton, MouseMode, Window, WindowOptions};
-use rand::rngs::SmallRng;
 use rand::SeedableRng;
+use rand::rngs::SmallRng;
 use simulation::{Board, Cell};
 
 const BOARD_WIDTH: usize = 200;
@@ -30,22 +30,30 @@ fn main() {
     let mut current_element = Cell::Sand;
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
-        if window.is_key_down(Key::Key1) { current_element = Cell::Sand; }
-        if window.is_key_down(Key::Key2) { current_element = Cell::Water; }
-        if window.is_key_down(Key::Key3) { current_element = Cell::Stone; }
-        if window.is_key_down(Key::Key0) { current_element = Cell::Empty; }
+        if window.is_key_down(Key::Key1) {
+            current_element = Cell::Sand;
+        }
+        if window.is_key_down(Key::Key2) {
+            current_element = Cell::Water;
+        }
+        if window.is_key_down(Key::Key3) {
+            current_element = Cell::Stone;
+        }
+        if window.is_key_down(Key::Key0) {
+            current_element = Cell::Empty;
+        }
 
-        if window.get_mouse_down(MouseButton::Left) {
-            if let Some((mx, my)) = window.get_mouse_pos(MouseMode::Discard) {
-                let bx = (mx as usize) / SCALE;
-                let by = (my as usize) / SCALE;
-                // Paint with a 3 x 3 brush
-                for dy in 0..3 {
-                    for dx in 0..3 {
-                        let x = bx.saturating_sub(1) + dx;
-                        let y = by.saturating_sub(1) + dy;
-                        board.set(x, y, current_element);
-                    }
+        if window.get_mouse_down(MouseButton::Left)
+            && let Some((mx, my)) = window.get_mouse_pos(MouseMode::Discard)
+        {
+            let bx = (mx as usize) / SCALE;
+            let by = (my as usize) / SCALE;
+            // Paint with a 3 x 3 brush
+            for dy in 0..3 {
+                for dx in 0..3 {
+                    let x = bx.saturating_sub(1) + dx;
+                    let y = by.saturating_sub(1) + dy;
+                    board.set(x, y, current_element);
                 }
             }
         }

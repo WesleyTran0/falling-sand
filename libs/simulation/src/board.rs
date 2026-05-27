@@ -93,58 +93,76 @@ impl Board {
         }
     }
 
+    /// Causes the sand at `(x, y)` to change according to its logic rules
     fn update_sand(&mut self, x: usize, y: usize, rng: &mut impl Rng) {
-        let left_diag = x.checked_sub(1).map(|nx| (nx, y + 1));
-        let right_diag = Some((x + 1, y + 1));
-
-        let mut diagonals = [left_diag, right_diag];
-        if rng.random_bool(0.5) {
-            diagonals.swap(0, 1);
-        }
-        let candidates = [Some((x, y + 1)), diagonals[0], diagonals[1]];
-
-        for candidate in candidates.iter().flatten() {
-            let (nx, ny) = *candidate;
-            if self.can_move_into(nx, ny) {
-                let cur_idx = self.idx(x, y);
-                let dst_idx = self.idx(nx, ny);
-                self.move_cell(cur_idx, dst_idx);
-                return;
-            }
-        }
+        self.try_fall(x, y, rng);
     }
 
+    /// Causes the water at `(x, y)` to change according to its logic rules
     fn update_water(&mut self, x: usize, y: usize, rng: &mut impl Rng) {
-        let left_diag = x.checked_sub(1).map(|nx| (nx, y + 1));
-        let right_diag = Some((x + 1, y + 1));
-
-        let mut diagonals = [left_diag, right_diag];
-        if rng.random_bool(0.5) {
-            diagonals.swap(0, 1);
+        // TODO: add some kind of momentum instead of "flowing sideways"
+        // this is to counter the randomized nature of going left and right, making it realisitc
+        if self.try_fall(x, y, rng) {
+            return;
         }
-        let left = x.checked_sub(1).map(|nx| (nx, y));
-        let right = Some((x + 1, y));
-        let mut sides = [left, right];
-        if rng.random_bool(0.5) {
-            sides.swap(0, 1);
-        }
-        let candidates = [
-            Some((x, y + 1)),
-            diagonals[0],
-            diagonals[1],
-            sides[0],
-            sides[1],
-        ];
+        self.try_flow_sideways(x, y, rng);
+    }
 
-        for candidate in candidates.iter().flatten() {
+    /// Attempts to move the Cell at `(x, y)` downwards. First, direclty below `(x, y)` will be
+    /// tried, randomly followed by either the left and right downward diagonal.
+    ///
+    /// Returns true if the cell moved
+    fn try_fall(&mut self, x: usize, y: usize, rng: &mut impl Rng) -> bool {
+        let down_left = x.checked_sub(1).map(|nx| (nx, y + 1));
+        let down_right = Some((x + 1, y + 1));
+        let (dir1, dir2) = if rng.random_bool(0.5) {
+            (down_left, down_right)
+        } else {
+            (down_right, down_left)
+        };
+
+        for candidate in [Some((x, y + 1)), dir1, dir2].iter().flatten() {
             let (nx, ny) = *candidate;
             if self.can_move_into(nx, ny) {
                 let cur_idx = self.idx(x, y);
                 let dst_idx = self.idx(nx, ny);
                 self.move_cell(cur_idx, dst_idx);
-                return;
+                return true;
             }
         }
+        false
+    }
+
+    fn try_flow_sideways(&mut self, x: usize, y: usize, rng: &mut impl Rng) -> bool {
+        const FLOW_DIST: usize = 5;
+        let go_left_first = rng.random_bool(0.5);
+        let dirs: [i32; 2] = if go_left_first { [-1, 1] } else { [1, -1] };
+
+        for dir in dirs {
+            // Find the furthest we can flow in this direction.
+            let mut best: Option<usize> = None;
+            for step in 1..=FLOW_DIST {
+                let nx = if dir < 0 {
+                    match x.checked_sub(step) {
+                        Some(v) => v,
+                        None => break,
+                    }
+                } else {
+                    x + step
+                };
+                if !self.can_move_into(nx, y) {
+                    break;
+                }
+                best = Some(nx);
+            }
+            if let Some(nx) = best {
+                let cur_idx = self.idx(x, y);
+                let dst_idx = self.idx(nx, y);
+                self.move_cell(cur_idx, dst_idx);
+                return true;
+            }
+        }
+        false
     }
 
     fn can_move_into(&self, nx: usize, ny: usize) -> bool {
