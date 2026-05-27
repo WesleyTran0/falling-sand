@@ -188,6 +188,7 @@ impl Board {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // TODO: add tests for update_sand and update_water and all helpers within them
 
     #[test]
     fn new_board_has_correct_dimensions() {

@@ -1,7 +1,7 @@
 use minifb::{Key, MouseButton, MouseMode, Window, WindowOptions};
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
-use simulation::{Board, Cell};
+use simulation::{Board, Brush, Cell};
 
 const BOARD_WIDTH: usize = 200;
 const BOARD_HEIGHT: usize = 200;
@@ -12,6 +12,7 @@ const WINDOW_HEIGHT: usize = BOARD_HEIGHT * SCALE;
 fn main() {
     let mut board = Board::new(BOARD_WIDTH, BOARD_HEIGHT);
     let mut rng = SmallRng::seed_from_u64(0xfa11_5a4d);
+    let brush = Brush::new(3, 0.45);
 
     let mut rgba = vec![0u8; BOARD_WIDTH * BOARD_HEIGHT * 4];
 
@@ -46,16 +47,10 @@ fn main() {
         if window.get_mouse_down(MouseButton::Left)
             && let Some((mx, my)) = window.get_mouse_pos(MouseMode::Discard)
         {
-            let bx = (mx as usize) / SCALE;
-            let by = (my as usize) / SCALE;
-            // Paint with a 3 x 3 brush
-            for dy in 0..3 {
-                for dx in 0..3 {
-                    let x = bx.saturating_sub(1) + dx;
-                    let y = by.saturating_sub(1) + dy;
-                    board.set(x, y, current_element);
-                }
-            }
+            let cx = (mx as usize) / SCALE;
+            let cy = (my as usize) / SCALE;
+            // brush.paint(&mut board, cx, cy, current_element, &mut rng);
+            brush.paint(&mut board, cx, cy, current_element);
         }
 
         board.step(&mut rng);
