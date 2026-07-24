@@ -42,7 +42,7 @@ impl Board {
     /// This function returns None if `x` or `y` are out of the bounds set by the `width` and `height` of
     /// this board.
     pub fn get(&self, x: usize, y: usize) -> Option<Cell> {
-        if x >= self.width && y >= self.height {
+        if x >= self.width || y >= self.height {
             return None;
         }
         Some(self.grid[self.idx(x, y)].cell)
@@ -53,7 +53,7 @@ impl Board {
     /// This function returns false if `x` or `y` are out of the bounds set by the `width` and `height` of
     /// this board
     pub fn set(&mut self, x: usize, y: usize, state: Cell) -> bool {
-        if x >= self.width && y >= self.height {
+        if x >= self.width || y >= self.height {
             return false;
         }
         let idx = self.idx(x, y);
