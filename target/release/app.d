@@ -1,1 +1,0 @@
-/home/wesley/falling-sand/target/release/app: /home/wesley/falling-sand/app/src/main.rs /home/wesley/falling-sand/libs/simulation/src/board.rs /home/wesley/falling-sand/libs/simulation/src/brush.rs /home/wesley/falling-sand/libs/simulation/src/cell.rs /home/wesley/falling-sand/libs/simulation/src/lib.rs /home/wesley/falling-sand/libs/simulation/src/render.rs
