@@ -12,7 +12,7 @@ const WINDOW_HEIGHT: usize = BOARD_HEIGHT * SCALE;
 fn main() {
     let mut board = Board::new(BOARD_WIDTH, BOARD_HEIGHT);
     let mut rng = SmallRng::seed_from_u64(0xfa11_5a4d);
-    let brush = Brush::new(3, 0.45);
+    let brush = Brush::new();
 
     let mut rgba = vec![0u8; BOARD_WIDTH * BOARD_HEIGHT * 4];
 
@@ -49,8 +49,7 @@ fn main() {
         {
             let cx = (mx as usize) / SCALE;
             let cy = (my as usize) / SCALE;
-            // brush.paint(&mut board, cx, cy, current_element, &mut rng);
-            brush.paint(&mut board, cx, cy, current_element);
+            brush.paint(&mut board, cx, cy, current_element, &mut rng);
         }
 
         board.step(&mut rng);
