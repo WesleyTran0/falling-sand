@@ -17,7 +17,7 @@ fn brush_params(cell: Cell) -> (Shape, f64) {
         Cell::Sand => (Shape::Circle { radius: 3 }, 0.45),
         Cell::Water => (
             Shape::Rectangle {
-                half_width: 1,
+                half_width: 2,
                 half_height: 3,
             },
             0.45,
