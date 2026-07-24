@@ -3,8 +3,8 @@ use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use simulation::{Board, Brush, Cell};
 
-const BOARD_WIDTH: usize = 200;
-const BOARD_HEIGHT: usize = 200;
+const BOARD_WIDTH: usize = 300;
+const BOARD_HEIGHT: usize = 300;
 const SCALE: usize = 3; // each cell drawn as SCALE x SCALE pixels
 const WINDOW_WIDTH: usize = BOARD_WIDTH * SCALE;
 const WINDOW_HEIGHT: usize = BOARD_HEIGHT * SCALE;
