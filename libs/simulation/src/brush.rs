@@ -109,7 +109,7 @@ mod tests {
         assert_eq!(brush_params(Cell::Sand), (Shape::Circle { radius: 3 }, 0.45));
         assert_eq!(
             brush_params(Cell::Water),
-            (Shape::Rectangle { half_width: 1, half_height: 3 }, 0.45)
+            (Shape::Rectangle { half_width: 2, half_height: 3 }, 0.45)
         );
         assert_eq!(brush_params(Cell::Stone), (Shape::Circle { radius: 2 }, 0.85));
         assert_eq!(brush_params(Cell::Empty), (Shape::Circle { radius: 3 }, 1.0));
@@ -237,12 +237,12 @@ mod tests {
             for x in 0..20 {
                 let dx = x as i32 - 10;
                 let dy = y as i32 - 10;
-                let within_box = dx.abs() <= 1 && dy.abs() <= 3;
+                let within_box = dx.abs() <= 2 && dy.abs() <= 3;
                 if !within_box {
                     assert_eq!(
                         board.get(x, y),
                         Some(Cell::Empty),
-                        "cell at ({x}, {y}) is outside water's 3x7 bounding box but was painted"
+                        "cell at ({x}, {y}) is outside water's 5x7 bounding box but was painted"
                     );
                 }
             }
