@@ -106,13 +106,28 @@ mod tests {
 
     #[test]
     fn brush_params_matches_tuning_table() {
-        assert_eq!(brush_params(Cell::Sand), (Shape::Circle { radius: 3 }, 0.45));
+        assert_eq!(
+            brush_params(Cell::Sand),
+            (Shape::Circle { radius: 3 }, 0.45)
+        );
         assert_eq!(
             brush_params(Cell::Water),
-            (Shape::Rectangle { half_width: 2, half_height: 3 }, 0.45)
+            (
+                Shape::Rectangle {
+                    half_width: 2,
+                    half_height: 3
+                },
+                0.45
+            )
         );
-        assert_eq!(brush_params(Cell::Stone), (Shape::Circle { radius: 2 }, 0.85));
-        assert_eq!(brush_params(Cell::Empty), (Shape::Circle { radius: 3 }, 1.0));
+        assert_eq!(
+            brush_params(Cell::Stone),
+            (Shape::Circle { radius: 2 }, 0.85)
+        );
+        assert_eq!(
+            brush_params(Cell::Empty),
+            (Shape::Circle { radius: 3 }, 1.0)
+        );
     }
 
     #[test]
@@ -120,7 +135,13 @@ mod tests {
         let mut board = Board::new(20, 20);
         let mut rng = SmallRng::seed_from_u64(0xbeef_5eed);
         let painted = scatter_paint(
-            &mut board, 10, 10, Cell::Sand, Shape::Circle { radius: 3 }, 0.0, &mut rng,
+            &mut board,
+            10,
+            10,
+            Cell::Sand,
+            Shape::Circle { radius: 3 },
+            0.0,
+            &mut rng,
         );
         assert_eq!(painted, 1);
         assert_eq!(board.get(10, 10), Some(Cell::Sand));
@@ -131,7 +152,13 @@ mod tests {
         let mut board = Board::new(20, 20);
         let mut rng = SmallRng::seed_from_u64(0xbeef_5eed);
         scatter_paint(
-            &mut board, 10, 10, Cell::Water, Shape::Circle { radius: 3 }, 0.0, &mut rng,
+            &mut board,
+            10,
+            10,
+            Cell::Water,
+            Shape::Circle { radius: 3 },
+            0.0,
+            &mut rng,
         );
         for dy in -3..=3i32 {
             for dx in -3..=3i32 {
@@ -157,7 +184,13 @@ mod tests {
         let mut board = Board::new(20, 20);
         let mut rng = SmallRng::seed_from_u64(0xbeef_5eed);
         let painted = scatter_paint(
-            &mut board, 10, 10, Cell::Stone, Shape::Circle { radius: 3 }, 1.0, &mut rng,
+            &mut board,
+            10,
+            10,
+            Cell::Stone,
+            Shape::Circle { radius: 3 },
+            1.0,
+            &mut rng,
         );
         assert_eq!(painted, 29, "radius-3 circle should contain 29 cells");
         for dy in -3..=3i32 {
@@ -188,7 +221,10 @@ mod tests {
     fn scatter_paint_rectangle_density_one_fills_entire_box_including_corners() {
         let mut board = Board::new(20, 20);
         let mut rng = SmallRng::seed_from_u64(0xbeef_5eed);
-        let shape = Shape::Rectangle { half_width: 1, half_height: 3 };
+        let shape = Shape::Rectangle {
+            half_width: 1,
+            half_height: 3,
+        };
         let painted = scatter_paint(&mut board, 10, 10, Cell::Water, shape, 1.0, &mut rng);
         assert_eq!(painted, 21, "3x7 rectangle should contain 21 cells");
         for dy in -3..=3i32 {
@@ -208,7 +244,10 @@ mod tests {
     fn scatter_paint_rectangle_density_zero_places_only_center() {
         let mut board = Board::new(20, 20);
         let mut rng = SmallRng::seed_from_u64(0xbeef_5eed);
-        let shape = Shape::Rectangle { half_width: 1, half_height: 3 };
+        let shape = Shape::Rectangle {
+            half_width: 1,
+            half_height: 3,
+        };
         scatter_paint(&mut board, 10, 10, Cell::Water, shape, 0.0, &mut rng);
         for dy in -3..=3i32 {
             for dx in -1..=1i32 {
