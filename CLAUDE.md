@@ -67,8 +67,18 @@ cargo clippy --all-targets
 Four agents in `.claude/agents/`, kept separate so the agent that writes code
 is never the one that reviews it:
 
-- `sim-scoper` — reads git log, specs, and TODOs; writes the next ticket as a
-  spec in `docs/specs/`. Read-only.
+- `sim-scoper` — the project manager. Owns `docs/specs/ROADMAP.md`, reconciles
+  it against `git log` and `logs/`, decides what gets built next, and writes
+  that ticket as a spec in `docs/specs/`. Biased toward shipping visible
+  behavior over cleanups. Read-only.
+
+  It works in two phases. **Phase 1 (current):** make sand, water and stone
+  genuinely good — sand piles at a believable slope and sinks through water,
+  water finds its level without teleporting or twitching, stone holds material
+  without leaking. **Phase 2 (gated):** new elements — ice, fire, smoke, oil
+  and friends, sequenced cheapest-machinery-first. Phase 2 opens when the
+  Phase 1 bar is met *or* when I say the three existing elements are good
+  enough; the element list is deliberately still open.
 - `sim-dev` — implements a spec, with tests.
 - `sim-reviewer` — reviews the diff against the sim's invariants
   (`FLAG_MOVED`, scan order, coordinate direction, determinism, layer purity).
