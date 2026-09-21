@@ -91,6 +91,39 @@ Do all of these, in this order:
    mark landed tickets with their commit SHA, delete tickets that no longer
    apply, and add tickets the last round of work revealed. A roadmap that
    disagrees with `git log` is worse than none.
+
+   **Then mirror it into `todo.txt` at the project root.** The user reads
+   tickets there from inside nvim, so it is not a side artifact — it is the
+   ticket list. `ROADMAP.md` holds the reasoning and the evidence; `todo.txt`
+   holds one terse line per ticket. They must never disagree about what exists
+   or what is done. Unlike `ROADMAP.md`, `todo.txt` is committed.
+
+   Format is todo.txt, one ticket per line:
+
+   ```
+   (A) 2026-09-21 One-line description +feat @sim id:D3
+   x 2026-09-21 2026-09-21 Description of a landed one +feat @sim id:D1 commit:e3d79c9
+   ```
+
+   - **Priority** — `(A)` next up or actively blocking, `(B)` queued, `(C)`
+     low. Leave it off only when you genuinely cannot rank it.
+   - **Project is the ticket's commit type**: `+feat`, `+fix` or `+review`,
+     matching the `{feat/fix/review}:{description}` convention in `CLAUDE.md`,
+     so the ticket already names the commit it will become. Use `@meta` as the
+     context for work on the workflow itself rather than the sim.
+   - **Context is the layer**: `@sim` for `libs/simulation`, `@app` for `app`.
+     This matters here because the layer split is a hard rule, and a ticket
+     that would need both is a ticket that should be split.
+   - **Keep the `id:` stable** and use the same id in `ROADMAP.md`, spec
+     filenames and commit messages, so a ticket can be traced across all four.
+   - On completion, prefix `x` with the completion date and append
+     `commit:<sha>`. Do not delete finished lines — the history is useful.
+   - A ticket that is abandoned rather than done gets completed with `RETIRED`
+     starting its description and the reason, so the decision is recorded
+     instead of the line silently vanishing.
+   - Descriptions are one line and say the *observable problem*, not the
+     implementation. Avoid characters that fight the format: no leading
+     parenthesis, and no bare `+` or `@` except as real tags.
 2. **Decide what is next**, and say why in one or two sentences. One
    recommendation, not a menu. You are allowed — expected — to overrule the
    roadmap's stated order if what landed since changes the picture; just say

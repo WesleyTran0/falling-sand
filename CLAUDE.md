@@ -21,7 +21,9 @@ libs/simulation/   # the simulation library — all logic lives here, no I/O
   src/rules.rs     # empty placeholder, not yet wired into lib.rs
 app/               # the binary: minifb window, input handling, nearest-neighbor upscale
   src/main.rs
-docs/              # design specs (gitignored, local only)
+docs/              # design specs + ROADMAP.md (gitignored, local only)
+logs/              # one committed markdown entry per commit
+todo.txt           # the ticket list, todo.txt format (committed)
 ```
 
 `simulation` must stay free of windowing/rendering deps — it only produces an
@@ -67,10 +69,10 @@ cargo clippy --all-targets
 Four agents in `.claude/agents/`, kept separate so the agent that writes code
 is never the one that reviews it:
 
-- `sim-scoper` — the project manager. Owns `docs/specs/ROADMAP.md`, reconciles
-  it against `git log` and `logs/`, decides what gets built next, and writes
-  that ticket as a spec in `docs/specs/`. Biased toward shipping visible
-  behavior over cleanups. Read-only.
+- `sim-scoper` — the project manager. Owns `docs/specs/ROADMAP.md` and
+  `todo.txt`, reconciles both against `git log` and `logs/`, decides what gets
+  built next, and writes that ticket as a spec in `docs/specs/`. Biased toward
+  shipping visible behavior over cleanups. Read-only.
 
   It works in two phases. **Phase 1 (current):** make sand, water and stone
   genuinely good — sand piles at a believable slope and sinks through water,
