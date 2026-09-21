@@ -104,11 +104,64 @@ impl Brush {
         let (shape, density) = brush_params(cell);
         scatter_paint(board, cx, cy, cell, shape, density, rng)
     }
+
+    /// Paints `cell` along the straight line from `(x0, y0)` to `(x1, y1)`,
+    /// stamping the brush at every cell the line passes through.
+    ///
+    /// The cursor is sampled once per frame, so a fast drag moves many cells
+    /// between consecutive samples. Stamping only at the sample points leaves
+    /// visible gaps in the stroke; walking the line between them does not, at
+    /// any cursor speed. Both endpoints are stamped, so `from == to` stamps
+    /// exactly once and a stationary cursor behaves like `paint`.
+    ///
+    /// Cells outside the board are dropped by `Board::set`'s bounds check.
+    /// Returns the number of cells actually painted.
+    pub fn paint_line(
+        &self,
+        board: &mut Board,
+        from: (usize, usize),
+        to: (usize, usize),
+        cell: Cell,
+        rng: &mut impl Rng,
+    ) -> usize {
+        let ((x0, y0), (x1, y1)) = (from, to);
+        // Bresenham over i64: the coordinates are `usize`, but the error term
+        // and the step deltas are signed.
+        let (mut x, mut y) = (x0 as i64, y0 as i64);
+        let (tx, ty) = (x1 as i64, y1 as i64);
+        let dx = (tx - x).abs();
+        let dy = -(ty - y).abs();
+        let sx = if x < tx { 1 } else { -1 };
+        let sy = if y < ty { 1 } else { -1 };
+        let mut err = dx + dy;
+
+        let mut painted = 0;
+        loop {
+            painted += self.paint(board, x as usize, y as usize, cell, rng);
+            if x == tx && y == ty {
+                break;
+            }
+            let e2 = 2 * err;
+            if e2 >= dy {
+                err += dy;
+                x += sx;
+            }
+            if e2 <= dx {
+                err += dx;
+                y += sy;
+            }
+        }
+        painted
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn brush() -> Brush {
+        Brush::new()
+    }
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
 
@@ -299,5 +352,130 @@ mod tests {
             Some(Cell::Water),
             "center should always be painted"
         );
+    }
+
+    /// Walks the same Bresenham line `paint_line` does, so a test can assert
+    /// on every cell the stroke should have covered.
+    fn line_cells(x0: i64, y0: i64, x1: i64, y1: i64) -> Vec<(usize, usize)> {
+        let (mut x, mut y) = (x0, y0);
+        let dx = (x1 - x).abs();
+        let dy = -(y1 - y).abs();
+        let sx = if x < x1 { 1 } else { -1 };
+        let sy = if y < y1 { 1 } else { -1 };
+        let mut err = dx + dy;
+        let mut out = Vec::new();
+        loop {
+            out.push((x as usize, y as usize));
+            if x == x1 && y == y1 {
+                break;
+            }
+            let e2 = 2 * err;
+            if e2 >= dy {
+                err += dy;
+                x += sx;
+            }
+            if e2 <= dx {
+                err += dx;
+                y += sy;
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn paint_line_leaves_no_gap_between_distant_points() {
+        // The brush centre is always placed regardless of density, so every
+        // cell on the line must be set even though the scatter is random.
+        let mut board = Board::new(60, 60);
+        let mut rng = SmallRng::seed_from_u64(0xd00d);
+        brush().paint_line(&mut board, (5, 5), (50, 30), Cell::Stone, &mut rng);
+        for (x, y) in line_cells(5, 5, 50, 30) {
+            assert_eq!(
+                board.get(x, y),
+                Some(Cell::Stone),
+                "gap in the stroke at ({x}, {y})"
+            );
+        }
+    }
+
+    #[test]
+    fn paint_line_with_identical_endpoints_matches_a_single_paint() {
+        let mut a = Board::new(20, 20);
+        let mut b = Board::new(20, 20);
+        let painted_line = brush().paint_line(
+            &mut a,
+            (10, 10),
+            (10, 10),
+            Cell::Sand,
+            &mut SmallRng::seed_from_u64(4),
+        );
+        let painted_dab =
+            brush().paint(&mut b, 10, 10, Cell::Sand, &mut SmallRng::seed_from_u64(4));
+        assert_eq!(
+            painted_line, painted_dab,
+            "a zero-length stroke stamped twice"
+        );
+        for y in 0..20 {
+            for x in 0..20 {
+                assert_eq!(a.get(x, y), b.get(x, y), "differs at ({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn paint_line_covers_the_same_cells_in_either_direction() {
+        let mut fwd = Board::new(40, 40);
+        let mut rev = Board::new(40, 40);
+        brush().paint_line(
+            &mut fwd,
+            (3, 7),
+            (30, 21),
+            Cell::Stone,
+            &mut SmallRng::seed_from_u64(9),
+        );
+        brush().paint_line(
+            &mut rev,
+            (30, 21),
+            (3, 7),
+            Cell::Stone,
+            &mut SmallRng::seed_from_u64(9),
+        );
+        // Scatter differs by direction, but every line cell is a brush centre
+        // and so must be set in both.
+        for (x, y) in line_cells(3, 7, 30, 21) {
+            assert_eq!(
+                fwd.get(x, y),
+                Some(Cell::Stone),
+                "forward missed ({x}, {y})"
+            );
+            assert_eq!(
+                rev.get(x, y),
+                Some(Cell::Stone),
+                "reverse missed ({x}, {y})"
+            );
+        }
+    }
+
+    #[test]
+    fn paint_line_handles_pure_horizontal_vertical_and_diagonal() {
+        for (x1, y1) in [(40usize, 20usize), (20, 40), (40, 40)] {
+            let mut board = Board::new(60, 60);
+            let mut rng = SmallRng::seed_from_u64(11);
+            brush().paint_line(&mut board, (20, 20), (x1, y1), Cell::Stone, &mut rng);
+            for (x, y) in line_cells(20, 20, x1 as i64, y1 as i64) {
+                assert_eq!(board.get(x, y), Some(Cell::Stone), "missed ({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn paint_line_off_the_board_does_not_panic() {
+        let mut board = Board::new(10, 10);
+        let mut rng = SmallRng::seed_from_u64(12);
+        // Endpoints far outside the grid: every stamp is dropped by bounds
+        // checks, and the walk still terminates.
+        brush().paint_line(&mut board, (5, 5), (400, 400), Cell::Sand, &mut rng);
+        brush().paint_line(&mut board, (900, 900), (901, 901), Cell::Sand, &mut rng);
+        assert_eq!(board.get(5, 5), Some(Cell::Sand));
     }
 }

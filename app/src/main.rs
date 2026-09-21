@@ -53,6 +53,10 @@ fn main() {
     window.set_target_fps(60);
 
     let mut current_element = Cell::Sand;
+    // Cursor cell from the previous frame, while the button stays held.
+    // `None` means the stroke has not started (or was broken), so the next
+    // paint is a single dab rather than a line from a stale position.
+    let mut stroke_from: Option<(usize, usize)> = None;
     let hud_style = HudStyle::default();
     let mut hud_visible = true;
 
@@ -88,14 +92,32 @@ fn main() {
             hud_visible = !hud_visible;
         }
 
-        if window.get_mouse_down(MouseButton::Left)
-            && let Some((mx, my)) = window.get_mouse_pos(MouseMode::Discard)
-        {
-            let cx = (mx as usize) / SCALE;
-            let cy = (my as usize) / SCALE;
-            // Clicks outside the board (e.g. a future HUD strip below it) are
-            // dropped by `Board::set`'s bounds check.
-            brush.paint(&mut board, cx, cy, current_element, &mut rng);
+        // The cursor is sampled once per frame, so a fast drag jumps several
+        // cells between samples. Painting only at the sample point leaves a
+        // dotted stroke; painting the line from the previous sample does not.
+        // Raising the frame rate would not fix this and would speed the sim up,
+        // since `board.step` runs once per frame.
+        match (
+            window.get_mouse_down(MouseButton::Left),
+            window.get_mouse_pos(MouseMode::Discard),
+        ) {
+            (true, Some((mx, my))) => {
+                let cx = (mx as usize) / SCALE;
+                let cy = (my as usize) / SCALE;
+                // Cells outside the board (e.g. a future HUD strip below it)
+                // are dropped by `Board::set`'s bounds check.
+                match stroke_from {
+                    Some((px, py)) => {
+                        brush.paint_line(&mut board, (px, py), (cx, cy), current_element, &mut rng)
+                    }
+                    None => brush.paint(&mut board, cx, cy, current_element, &mut rng),
+                };
+                stroke_from = Some((cx, cy));
+            }
+            // Button released, or the cursor left the window. Either way the
+            // stroke is broken: resuming must not draw a line across the board
+            // from wherever the cursor was last seen.
+            _ => stroke_from = None,
         }
 
         board.step(&mut rng);
