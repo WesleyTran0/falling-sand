@@ -188,7 +188,8 @@ impl Board {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // TODO: add tests for update_sand and update_water and all helpers within them
+    use rand::SeedableRng;
+    use rand::rngs::SmallRng;
 
     #[test]
     fn new_board_has_correct_dimensions() {
@@ -287,5 +288,389 @@ mod tests {
         assert_eq!(board.get(7, 0), Some(Cell::Water));
         assert_eq!(board.get(0, 2), Some(Cell::Water));
         assert_eq!(board.get(7, 2), Some(Cell::Stone));
+    }
+
+    // --- Sand: `try_fall` / `update_sand` ---
+
+    #[test]
+    fn sand_falls_straight_down_one_row_per_step() {
+        let mut board = Board::new(3, 10);
+        let mut rng = SmallRng::seed_from_u64(1);
+        board.set(1, 0, Cell::Sand);
+
+        board.step(&mut rng);
+
+        // `(x, y + 1)` is tried before either diagonal, so the coin flip in
+        // `try_fall` cannot affect this outcome.
+        assert_eq!(board.get(1, 1), Some(Cell::Sand));
+        assert_eq!(board.get(1, 0), Some(Cell::Empty));
+    }
+
+    #[test]
+    fn sand_falls_one_row_per_step_not_more() {
+        let mut board = Board::new(3, 10);
+        let mut rng = SmallRng::seed_from_u64(2);
+        board.set(1, 0, Cell::Sand);
+
+        for y in 1..10 {
+            board.step(&mut rng);
+            assert_eq!(
+                board.get(1, y),
+                Some(Cell::Sand),
+                "sand should descend exactly one row per step, expected it at (1, {y})"
+            );
+            assert_eq!(
+                board.get(1, y - 1),
+                Some(Cell::Empty),
+                "sand was duplicated: (1, {}) is still occupied",
+                y - 1
+            );
+        }
+
+        // On the bottom row there is nowhere left to go.
+        board.step(&mut rng);
+        assert_eq!(board.get(1, 9), Some(Cell::Sand));
+    }
+
+    #[test]
+    fn sand_on_bottom_row_does_not_move() {
+        let mut board = Board::new(3, 3);
+        let mut rng = SmallRng::seed_from_u64(3);
+        board.set(1, 2, Cell::Sand);
+
+        board.step(&mut rng);
+
+        // All three candidates have `ny == height`, so `can_move_into` rejects them.
+        assert_eq!(board.get(1, 2), Some(Cell::Sand));
+    }
+
+    #[test]
+    fn sand_slides_to_the_only_open_diagonal() {
+        let mut board = Board::new(3, 3);
+        let mut rng = SmallRng::seed_from_u64(4);
+        board.set(1, 0, Cell::Sand);
+        board.set(1, 1, Cell::Stone);
+        board.set(2, 1, Cell::Stone);
+
+        board.step(&mut rng);
+
+        // Down-left is the only legal candidate, so the coin flip order is irrelevant.
+        assert_eq!(board.get(0, 1), Some(Cell::Sand));
+        assert_eq!(board.get(1, 0), Some(Cell::Empty));
+    }
+
+    #[test]
+    fn sand_fully_blocked_does_not_move() {
+        let mut board = Board::new(3, 3);
+        let mut rng = SmallRng::seed_from_u64(5);
+        board.set(1, 0, Cell::Sand);
+        board.set(0, 1, Cell::Stone);
+        board.set(1, 1, Cell::Stone);
+        board.set(2, 1, Cell::Stone);
+
+        board.step(&mut rng);
+
+        assert_eq!(board.get(1, 0), Some(Cell::Sand));
+    }
+
+    #[test]
+    fn sand_column_falls_without_gaps() {
+        let mut board = Board::new(3, 10);
+        let mut rng = SmallRng::seed_from_u64(6);
+        board.set(1, 0, Cell::Sand);
+        board.set(1, 1, Cell::Sand);
+        board.set(1, 2, Cell::Sand);
+
+        board.step(&mut rng);
+
+        // The bottom-up scan frees each destination before the cell above is
+        // considered, so the column stays contiguous. Under a top-down scan the
+        // top cell is processed first, finds `(1, 1)` still occupied, and slides
+        // diagonally to `(0, 1)` instead — which is why this pins scan order.
+        assert_eq!(board.get(1, 0), Some(Cell::Empty));
+        assert_eq!(board.get(1, 1), Some(Cell::Sand));
+        assert_eq!(board.get(1, 2), Some(Cell::Sand));
+        assert_eq!(board.get(1, 3), Some(Cell::Sand));
+    }
+
+    // --- Water: `update_water` / `try_flow_sideways` ---
+
+    #[test]
+    fn water_prefers_falling_over_flowing() {
+        let mut board = Board::new(3, 10);
+        let mut rng = SmallRng::seed_from_u64(7);
+        board.set(1, 0, Cell::Water);
+
+        board.step(&mut rng);
+
+        // `update_water` returns as soon as `try_fall` succeeds.
+        assert_eq!(board.get(1, 1), Some(Cell::Water));
+        assert_eq!(board.get(1, 0), Some(Cell::Empty));
+    }
+
+    #[test]
+    fn water_flows_sideways_when_it_cannot_fall() {
+        let mut board = Board::new(11, 10);
+        let mut rng = SmallRng::seed_from_u64(8);
+        board.set(5, 9, Cell::Water);
+
+        board.step(&mut rng);
+
+        // Both directions are genuinely legal here, so assert membership in the
+        // allowed set rather than one exact coordinate.
+        let found: Vec<(usize, usize)> = (0..board.width())
+            .flat_map(|x| (0..board.height()).map(move |y| (x, y)))
+            .filter(|&(x, y)| board.get(x, y) == Some(Cell::Water))
+            .collect();
+        assert_eq!(found.len(), 1, "water should not be duplicated: {found:?}");
+        let (x, y) = found[0];
+        assert_eq!(y, 9, "water must not change rows when it flows sideways");
+        assert!(
+            x == 0 || x == 10,
+            "water flowed to x = {x}, expected 0 or 10"
+        );
+    }
+
+    #[test]
+    fn water_blocked_on_both_sides_does_not_move() {
+        let mut board = Board::new(11, 10);
+        let mut rng = SmallRng::seed_from_u64(9);
+        board.set(5, 9, Cell::Water);
+        board.set(4, 9, Cell::Stone);
+        board.set(6, 9, Cell::Stone);
+
+        board.step(&mut rng);
+
+        // Both direction loops break on their first step, leaving `best == None`.
+        assert_eq!(board.get(5, 9), Some(Cell::Water));
+    }
+
+    #[test]
+    fn water_flow_stops_before_an_obstacle() {
+        let mut board = Board::new(20, 10);
+        let mut rng = SmallRng::seed_from_u64(10);
+        board.set(5, 9, Cell::Water);
+        board.set(2, 9, Cell::Stone);
+        board.set(6, 9, Cell::Stone);
+
+        board.step(&mut rng);
+
+        // Rightward yields `None`, leftward yields 3 — deterministic either way.
+        assert_eq!(board.get(3, 9), Some(Cell::Water));
+        assert_eq!(board.get(2, 9), Some(Cell::Stone));
+        assert_eq!(board.get(5, 9), Some(Cell::Empty));
+    }
+
+    /// Pins `FLOW_DIST = 5`: water teleports up to five cells sideways in a
+    /// single step.
+    ///
+    /// This is a current limitation, not desired behavior. Ticket W2 replaces
+    /// the teleport with per-step momentum and must delete or rewrite this test
+    /// rather than loosen the assertion.
+    #[test]
+    fn water_flows_at_most_flow_dist_cells_per_step() {
+        let mut board = Board::new(20, 10);
+        let mut rng = SmallRng::seed_from_u64(11);
+        board.set(9, 9, Cell::Water);
+        board.set(10, 9, Cell::Stone);
+
+        board.step(&mut rng);
+
+        // Rightward yields `None`, so the move is deterministic: exactly five
+        // cells to the left, no further.
+        assert_eq!(board.get(4, 9), Some(Cell::Water));
+        assert_eq!(board.get(3, 9), Some(Cell::Empty));
+        assert_eq!(board.get(9, 9), Some(Cell::Empty));
+    }
+
+    // --- Step invariants ---
+
+    #[test]
+    fn step_conserves_cell_counts() {
+        /// Counts each non-`Empty` variant as `(sand, water, stone)`.
+        fn counts(board: &Board) -> (usize, usize, usize) {
+            let mut out = (0, 0, 0);
+            for slot in &board.grid {
+                match slot.cell {
+                    Cell::Sand => out.0 += 1,
+                    Cell::Water => out.1 += 1,
+                    Cell::Stone => out.2 += 1,
+                    Cell::Empty => {}
+                }
+            }
+            out
+        }
+
+        let mut board = Board::new(40, 40);
+        let mut rng = SmallRng::seed_from_u64(12);
+        for y in 0..40 {
+            for x in 0..40 {
+                let cell = match (x * 7 + y * 13) % 5 {
+                    0 => Cell::Sand,
+                    1 => Cell::Water,
+                    2 => Cell::Stone,
+                    _ => Cell::Empty,
+                };
+                board.set(x, y, cell);
+            }
+        }
+
+        let before = counts(&board);
+        assert!(before.0 > 0 && before.1 > 0 && before.2 > 0);
+
+        for step in 1..=50 {
+            board.step(&mut rng);
+            assert_eq!(
+                counts(&board),
+                before,
+                "material was created or destroyed on step {step}"
+            );
+        }
+    }
+
+    /// Pins that `move_cell` sets `FLAG_MOVED` on the *destination* slot, and
+    /// that `can_move_into` then rejects that slot.
+    ///
+    /// Asserted directly rather than through falling behavior: `step` scans
+    /// bottom-up, so a cell that moves down always lands in an already-scanned
+    /// row and is never revisited, which means no amount of sand-falling can
+    /// observe this flag. Ticket D1's `swap_cells` moves the displaced cell
+    /// *up* into the row being scanned, where it becomes load-bearing.
+    #[test]
+    fn move_cell_flags_the_destination() {
+        let mut board = Board::new(3, 10);
+        let mut rng = SmallRng::seed_from_u64(16);
+        board.set(1, 0, Cell::Sand);
+
+        board.update_cell(1, 0, &mut rng);
+
+        assert_eq!(board.get(1, 1), Some(Cell::Sand));
+        let dst = board.idx(1, 1);
+        assert_eq!(
+            board.grid[dst].flags & FLAG_MOVED,
+            FLAG_MOVED,
+            "move_cell must flag the destination slot"
+        );
+        assert!(
+            !board.can_move_into(1, 1),
+            "a slot flagged FLAG_MOVED must be rejected as a destination"
+        );
+    }
+
+    /// Pins that `FLAG_MOVED` stops a cell moving twice in one step.
+    ///
+    /// Sideways flow is the only motion that can expose this: it stays in the
+    /// row being scanned, so on a fresh board (`scan_left_to_right == true`)
+    /// water that flows *right* lands on a column the scan has not reached yet.
+    /// Without the flag the scan picks it up again and it skates across the row
+    /// in a single step.
+    #[test]
+    fn water_does_not_flow_twice_in_one_step() {
+        let mut board = Board::new(30, 10);
+        let mut rng = SmallRng::seed_from_u64(17);
+        board.set(0, 9, Cell::Water);
+
+        // Rightward is the only legal direction from x = 0, so the coin flip in
+        // `try_flow_sideways` cannot affect this outcome.
+        assert!(board.scan_left_to_right);
+        board.step(&mut rng);
+
+        let found: Vec<usize> = (0..board.width())
+            .filter(|&x| board.get(x, 9) == Some(Cell::Water))
+            .collect();
+        assert_eq!(
+            found,
+            vec![5],
+            "water should flow FLOW_DIST = 5 cells once, not repeatedly"
+        );
+    }
+
+    /// Pins that `step` clears *every* flag bit at the end of the step, not
+    /// just `FLAG_MOVED`.
+    ///
+    /// A spare bit is set by hand before stepping, because `FLAG_MOVED` is the
+    /// only bit production code ever sets: asserting on `FLAG_MOVED` alone
+    /// cannot distinguish `flags = 0` from `flags &= !FLAG_MOVED`.
+    ///
+    /// Ticket W1 narrows the clear to `flags &= !FLAG_MOVED` so that a momentum
+    /// bit can persist across steps. That change *will* fail this test, which is
+    /// the point — W1 must rewrite it to assert the momentum bit survives while
+    /// `FLAG_MOVED` does not.
+    #[test]
+    fn step_clears_all_flags() {
+        const SPARE_FLAG: u8 = 1 << 1;
+
+        let mut board = Board::new(3, 10);
+        let mut rng = SmallRng::seed_from_u64(13);
+        board.set(1, 0, Cell::Sand);
+        let spare_idx = board.idx(2, 5);
+        board.grid[spare_idx].flags |= SPARE_FLAG;
+
+        board.step(&mut rng);
+
+        // The sand definitely moved, so `FLAG_MOVED` was definitely set too.
+        assert_eq!(board.get(1, 1), Some(Cell::Sand));
+        for (i, slot) in board.grid.iter().enumerate() {
+            assert_eq!(slot.flags, 0, "flags left set at index {i}");
+        }
+    }
+
+    #[test]
+    fn step_alternates_scan_direction() {
+        let mut board = Board::new(3, 3);
+        let mut rng = SmallRng::seed_from_u64(14);
+
+        assert!(board.scan_left_to_right);
+        board.step(&mut rng);
+        assert!(!board.scan_left_to_right);
+        board.step(&mut rng);
+        assert!(board.scan_left_to_right);
+    }
+
+    #[test]
+    fn stone_never_moves() {
+        let mut board = Board::new(5, 10);
+        let mut rng = SmallRng::seed_from_u64(15);
+        board.set(2, 0, Cell::Stone);
+
+        for _ in 0..20 {
+            board.step(&mut rng);
+        }
+
+        assert_eq!(board.get(2, 0), Some(Cell::Stone));
+        // Counted board-wide so a `move_cell` that duplicates instead of moving
+        // cannot pass by leaving the original in place.
+        let stone = (0..board.width())
+            .flat_map(|x| (0..board.height()).map(move |y| (x, y)))
+            .filter(|&(x, y)| board.get(x, y) == Some(Cell::Stone))
+            .count();
+        assert_eq!(stone, 1, "stone was duplicated");
+    }
+
+    /// Pins that sand does *not* sink through water: `can_move_into` only
+    /// accepts `Cell::Empty` destinations, so denser material cannot displace
+    /// lighter material.
+    ///
+    /// This is a current limitation, not desired behavior. Ticket D1 (density
+    /// and displacement) inverts it — after D1 this same setup should end with
+    /// sand at `(1, 1)` and water at `(1, 0)` — and must replace this test with
+    /// that mirror image rather than loosen the assertion.
+    #[test]
+    fn sand_does_not_yet_sink_through_water() {
+        let mut board = Board::new(3, 3);
+        let mut rng = SmallRng::seed_from_u64(16);
+        // Floor and walls, so the water is boxed in and can neither fall nor flow.
+        board.set(0, 2, Cell::Stone);
+        board.set(1, 2, Cell::Stone);
+        board.set(2, 2, Cell::Stone);
+        board.set(0, 1, Cell::Stone);
+        board.set(2, 1, Cell::Stone);
+        board.set(1, 1, Cell::Water);
+        board.set(1, 0, Cell::Sand);
+
+        board.step(&mut rng);
+
+        assert_eq!(board.get(1, 0), Some(Cell::Sand));
+        assert_eq!(board.get(1, 1), Some(Cell::Water));
     }
 }
