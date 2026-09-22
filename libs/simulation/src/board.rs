@@ -96,7 +96,10 @@ impl Board {
 
     /// Causes the sand at `(x, y)` to change according to its logic rules
     fn update_sand(&mut self, x: usize, y: usize, rng: &mut impl Rng) {
-        self.try_fall(x, y, rng);
+        if self.try_fall(x, y, rng) {
+            return;
+        }
+        self.try_slump(x, y);
     }
 
     /// Causes the water at `(x, y)` to change according to its logic rules
@@ -177,6 +180,83 @@ impl Board {
         false
     }
 
+    /// Attempts to slump the supported cell at `(x, y)` one cell sideways: the
+    /// lower angle of repose that submerged sand has and dry sand does not.
+    ///
+    /// Only called after `try_fall` has failed, so the cell is resting on
+    /// something. Two conditions must both hold:
+    ///
+    /// * The destination `(x + dir, y)` must hold a strictly lighter,
+    ///   **non-`Empty`** material — `can_displace`. That is the physical
+    ///   trigger: buoyancy and lubrication come from being in contact with a
+    ///   fluid, so the contact is what is tested, not whether the grain is
+    ///   submerged. Because `can_displace` rejects `Cell::Empty`, this rule is
+    ///   structurally incapable of firing in air, which leaves dry sand's ~45°
+    ///   repose untouched.
+    /// * The look-ahead `(x + 2 * dir, y + 1)` — one further along and one row
+    ///   **down** — must be empty or lighter, i.e. `try_fall`'s diagonal
+    ///   precondition evaluated at the destination.
+    ///
+    /// The look-ahead is what sets the angle and what prevents oscillation.
+    /// Without it (or with a same-row look-ahead) the terminal state is a flat
+    /// bed and two surface columns whose heights differ by one trade that
+    /// difference back and forth forever. Requiring a *downward* continuation
+    /// means every successful slump is followed by a descent, material only
+    /// ever moves down-slope, and the stable surface is one where columns two
+    /// apart differ by at most one row: 1 row per 2 columns, ~26.6°.
+    ///
+    /// Out-of-bounds coordinates fail both checks, so nothing slides off the
+    /// edge of the board. Direction order comes from `self.scan_left_to_right`,
+    /// which flips every step, rather than from the RNG: both directions
+    /// qualify only for a grain that is a local peak, so the choice is a
+    /// tie-break whose bias cancels step to step.
+    ///
+    /// Returns true if the cell moved.
+    fn try_slump(&mut self, x: usize, y: usize) -> bool {
+        // Read from the grid rather than hardcoding `Cell::Sand`: the density
+        // comparisons below must use the mover's own density. Only sand is
+        // routed here today, but a denser element added later and pointed at
+        // this rule would otherwise be compared using sand's density and
+        // silently refuse to slump.
+        let mover = self.grid[self.idx(x, y)].cell;
+        let dirs: [i32; 2] = if self.scan_left_to_right {
+            [-1, 1]
+        } else {
+            [1, -1]
+        };
+
+        for dir in dirs {
+            // `checked_sub` for leftward moves; the `>= width` guards in
+            // `can_displace` / `can_move_into` cover the rightward side.
+            let Some(nx) = offset_x(x, dir) else {
+                continue;
+            };
+            if !self.can_displace(mover, nx, y) {
+                continue;
+            }
+            let Some(lx) = offset_x(nx, dir) else {
+                continue;
+            };
+            let ly = y + 1;
+            // Note this predicate is `FLAG_MOVED`-sensitive, not purely
+            // geometric: row `y + 1` is scanned before row `y`, so the target
+            // may already be flagged by this step's motion. That only ever
+            // makes the check stricter — it delays a slump by a step, it can
+            // never permit an illegal one — and measurement shows the
+            // anti-oscillation guarantee does not depend on it. It matters
+            // when ticket S1 extracts a shared "legal descent" predicate:
+            // `try_fall` needs the flag check because it is about to move,
+            // this look-ahead only predicts, so which semantics the shared
+            // helper takes must be a decision rather than an accident.
+            if !(self.can_move_into(lx, ly) || self.can_displace(mover, lx, ly)) {
+                continue;
+            }
+            self.swap_cells(self.idx(x, y), self.idx(nx, y));
+            return true;
+        }
+        false
+    }
+
     fn can_move_into(&self, nx: usize, ny: usize) -> bool {
         if nx >= self.width || ny >= self.height {
             return false;
@@ -238,6 +318,20 @@ impl Board {
     /// Calculates the flat index from two dimensional coordinates
     fn idx(&self, x: usize, y: usize) -> usize {
         y * self.width + x
+    }
+}
+
+/// Offsets an unsigned column index by `dir`, which is expected to be `-1` or
+/// `1`.
+///
+/// Returns `None` only on underflow at the left edge; the right edge is left to
+/// the callers' `>= width` bounds checks, which is the asymmetry unsigned
+/// coordinates force.
+fn offset_x(x: usize, dir: i32) -> Option<usize> {
+    if dir < 0 {
+        x.checked_sub(dir.unsigned_abs() as usize)
+    } else {
+        Some(x + dir as usize)
     }
 }
 
@@ -905,5 +999,302 @@ mod tests {
         }
         let settled: Vec<Option<Cell>> = (0..10).map(|y| board.get(1, y)).collect();
         assert_eq!(settled, column, "a settled stack must not keep moving");
+    }
+
+    // --- Sand: `try_slump`, the submerged angle of repose ---
+
+    /// The shared 6x5 fixture for the `try_slump` scenarios.
+    ///
+    /// ```text
+    ///   y=0  . . . . . .
+    ///   y=1  . . . . . .
+    ///   y=2  . # o D # .     D = the slide destination, `dest`   (3,2)
+    ///   y=3  . # # # L #     L = the look-ahead cell, `look`     (4,3)
+    ///   y=4  # # # # # #
+    /// ```
+    ///
+    /// The grain at `(2,2)` has stone straight down and on both downward
+    /// diagonals, so `try_fall` fails whichever way its coin lands. Stone at
+    /// `(1,2)` blocks the leftward slump outright, so only one direction is ever
+    /// legal and the scan direction cannot change the outcome either. Stone at
+    /// `(4,2)` pens `D` in so it cannot flow away on its own.
+    fn slump_fixture(dest: Cell, look: Cell) -> Board {
+        let mut board = Board::new(6, 5);
+        for x in 0..6 {
+            board.set(x, 4, Cell::Stone);
+        }
+        for x in [1, 2, 3, 5] {
+            board.set(x, 3, Cell::Stone);
+        }
+        board.set(1, 2, Cell::Stone);
+        board.set(4, 2, Cell::Stone);
+        board.set(2, 2, Cell::Sand);
+        board.set(3, 2, dest);
+        board.set(4, 3, look);
+        board
+    }
+
+    /// A: the headline rule. Supported sand in lateral contact with water
+    /// slides one cell toward it, but only because it could then descend from
+    /// there.
+    ///
+    /// The `(4,3)` assertion is the one that catches a missing destination flag:
+    /// unflagged, the grain that lands on `(3,2)` is picked up again by the same
+    /// left-to-right scan and falls on into `(4,3)` within a single step.
+    #[test]
+    fn submerged_sand_slumps_sideways_when_it_can_descend_beyond() {
+        let mut board = slump_fixture(Cell::Water, Cell::Water);
+        let mut rng = SmallRng::seed_from_u64(24);
+
+        board.step(&mut rng);
+
+        assert_eq!(board.get(3, 2), Some(Cell::Sand), "the grain should slump");
+        assert_eq!(
+            board.get(2, 2),
+            Some(Cell::Water),
+            "the displaced water takes the grain's old slot"
+        );
+        assert_eq!(
+            board.get(4, 3),
+            Some(Cell::Water),
+            "a slump is one cell per step: the grain must not also descend"
+        );
+    }
+
+    /// B: a slump is never a dead end. The look-ahead is exactly `try_fall`'s
+    /// diagonal precondition at the destination, so the descent follows.
+    #[test]
+    fn slumped_sand_descends_on_the_next_step() {
+        let mut board = slump_fixture(Cell::Water, Cell::Water);
+        let mut rng = SmallRng::seed_from_u64(25);
+
+        board.step(&mut rng);
+        board.step(&mut rng);
+
+        assert_eq!(board.get(4, 3), Some(Cell::Sand));
+        assert_eq!(board.get(3, 2), Some(Cell::Water));
+    }
+
+    /// C: the look-ahead test. This is what pins the ~26.6° angle and the
+    /// no-oscillation property — without the look-ahead the grain slides into
+    /// any adjacent water and the terminal slope is flat.
+    #[test]
+    fn sand_does_not_slump_without_room_to_descend() {
+        let mut board = slump_fixture(Cell::Water, Cell::Stone);
+        let mut rng = SmallRng::seed_from_u64(26);
+
+        board.step(&mut rng);
+
+        assert_eq!(
+            board.get(2, 2),
+            Some(Cell::Sand),
+            "nothing should have moved"
+        );
+        assert_eq!(board.get(3, 2), Some(Cell::Water));
+    }
+
+    /// D: the dry-sand guard, stated as a unit. `can_displace` rejects
+    /// `Cell::Empty`, so the rule cannot fire in air at all.
+    #[test]
+    fn dry_supported_sand_does_not_slump_into_air() {
+        let mut board = slump_fixture(Cell::Empty, Cell::Empty);
+        let mut rng = SmallRng::seed_from_u64(27);
+
+        board.step(&mut rng);
+
+        assert_eq!(board.get(2, 2), Some(Cell::Sand));
+        assert_eq!(board.get(3, 2), Some(Cell::Empty));
+    }
+
+    /// E: sand never slumps into sand — the density comparison stays strict.
+    ///
+    /// A sand-into-sand swap leaves both cell *values* unchanged, so position
+    /// alone cannot see it and `FLAG_MOVED` is the only observable. That is why
+    /// this drives `update_cell` directly instead of `step`, which clears every
+    /// flag before returning: asserting on positions after a `step` still
+    /// passes when `can_displace` is relaxed to `>=`.
+    #[test]
+    fn sand_does_not_slump_into_sand() {
+        let mut board = slump_fixture(Cell::Sand, Cell::Water);
+        let mut rng = SmallRng::seed_from_u64(28);
+
+        board.update_cell(2, 2, &mut rng);
+
+        assert_eq!(
+            board.get(2, 2),
+            Some(Cell::Sand),
+            "the grain must not slump"
+        );
+        assert_eq!(board.get(3, 2), Some(Cell::Sand));
+        let grain = board.idx(2, 2);
+        let dest = board.idx(3, 2);
+        assert_eq!(
+            board.grid[grain].flags & FLAG_MOVED,
+            0,
+            "sand must not slump into equally dense sand"
+        );
+        assert_eq!(
+            board.grid[dest].flags & FLAG_MOVED,
+            0,
+            "sand must not slump into equally dense sand"
+        );
+    }
+
+    /// F: the source flag on `swap_cells`. Row `y-1` is scanned after row `y`,
+    /// so a grain sitting directly above the displaced water would otherwise
+    /// swap down into it and the water would travel sideways *and* up in one
+    /// step, ending at `(2,1)`.
+    #[test]
+    fn displaced_water_does_not_move_twice_when_sand_slumps() {
+        let mut board = slump_fixture(Cell::Water, Cell::Water);
+        let mut rng = SmallRng::seed_from_u64(29);
+        board.set(2, 1, Cell::Sand);
+
+        board.step(&mut rng);
+
+        assert_eq!(board.get(3, 2), Some(Cell::Sand), "the lower grain slumps");
+        assert_eq!(
+            board.get(2, 2),
+            Some(Cell::Water),
+            "the displaced water must stay in the slot it was pushed into"
+        );
+        assert_eq!(
+            board.get(2, 1),
+            Some(Cell::Sand),
+            "the grain above must not swap with water that already moved"
+        );
+    }
+
+    /// The G/H staircase fixture, 10 wide and 8 tall. `fluid` fills every free
+    /// cell: `Cell::Empty` for the dry case, `Cell::Water` for the submerged one.
+    ///
+    /// ```text
+    ///   y=0  # # ~ ~ ~ ~ ~ ~ ~ #
+    ///   y=1  # # ~ ~ ~ ~ ~ ~ ~ #
+    ///   y=2  # # ~ ~ ~ ~ ~ ~ ~ #
+    ///   y=3  # # ~ ~ ~ ~ ~ ~ ~ #
+    ///   y=4  # # o ~ ~ ~ ~ ~ ~ #
+    ///   y=5  # # o o ~ ~ ~ ~ ~ #
+    ///   y=6  # # o o o ~ ~ ~ ~ #
+    ///   y=7  # # # # # # # # # #
+    /// ```
+    ///
+    /// The `x = 1` wall is load-bearing: without it the staircase's left face is
+    /// a vertical drop and even the dry pile collapses, which would make the dry
+    /// test a test of the wrong thing.
+    fn staircase_fixture(fluid: Cell) -> Board {
+        let mut board = Board::new(10, 8);
+        for y in 0..8 {
+            for x in 2..9 {
+                board.set(x, y, fluid);
+            }
+            board.set(0, y, Cell::Stone);
+            board.set(1, y, Cell::Stone);
+            board.set(9, y, Cell::Stone);
+        }
+        for x in 0..10 {
+            board.set(x, 7, Cell::Stone);
+        }
+        for (x, y) in [(2, 4), (2, 5), (2, 6), (3, 5), (3, 6), (4, 6)] {
+            board.set(x, y, Cell::Sand);
+        }
+        board
+    }
+
+    /// Collects every sand cell as `(x, y)` in reading order: rows top to
+    /// bottom, and left to right within a row.
+    fn sand_cells(board: &Board) -> Vec<(usize, usize)> {
+        (0..board.height())
+            .flat_map(|y| (0..board.width()).map(move |x| (x, y)))
+            .filter(|&(x, y)| board.get(x, y) == Some(Cell::Sand))
+            .collect()
+    }
+
+    /// G: the direct regression guard on the user's dry 45° pile. A dry
+    /// staircase whose columns differ by one is already at its angle of repose
+    /// and must not budge.
+    #[test]
+    fn a_dry_forty_five_degree_slope_is_stable() {
+        let mut board = staircase_fixture(Cell::Empty);
+        let mut rng = SmallRng::seed_from_u64(30);
+        let before = sand_cells(&board);
+
+        for _ in 0..50 {
+            board.step(&mut rng);
+        }
+
+        assert_eq!(
+            sand_cells(&board),
+            before,
+            "dry sand at 45° must not slump: the rule cannot fire in air"
+        );
+    }
+
+    /// I: the anti-oscillation guarantee, asserted **per step** rather than on
+    /// the settled state.
+    ///
+    /// A submerged bed whose column heights are `2 2 2 1 1 1` is already at the
+    /// 1-row-per-2-columns angle, so no grain may move at all. The box is
+    /// completely full — every free cell is water, so no cell is `Empty` — which
+    /// means the water cannot move either and the *whole board* must be
+    /// byte-stable on every single step.
+    ///
+    /// This is the shape of failure a settled-state test cannot see: drop the
+    /// downward look-ahead and the one-cell surface step trades back and forth
+    /// forever, which a 50-step-then-compare assertion can pass by landing on an
+    /// even beat.
+    #[test]
+    fn a_submerged_bed_at_the_slump_angle_never_moves_on_any_step() {
+        let mut board = Board::new(8, 6);
+        let mut rng = SmallRng::seed_from_u64(32);
+        for y in 0..6 {
+            for x in 1..7 {
+                board.set(x, y, Cell::Water);
+            }
+            board.set(0, y, Cell::Stone);
+            board.set(7, y, Cell::Stone);
+        }
+        for x in 0..8 {
+            board.set(x, 5, Cell::Stone);
+        }
+        // Column heights 2 2 2 1 1 1: a single one-cell surface step, which is
+        // legal at 26.6° and would oscillate under a rule with no look-ahead.
+        for x in 1..7 {
+            board.set(x, 4, Cell::Sand);
+        }
+        for x in 1..4 {
+            board.set(x, 3, Cell::Sand);
+        }
+
+        let before: Vec<Cell> = board.grid.iter().map(|slot| slot.cell).collect();
+        for step in 1..=50 {
+            board.step(&mut rng);
+            let now: Vec<Cell> = board.grid.iter().map(|slot| slot.cell).collect();
+            assert_eq!(
+                now, before,
+                "the board changed on step {step}: a bed at the slump angle must be static"
+            );
+        }
+    }
+
+    /// H: the same sand geometry, the only difference being water, must settle
+    /// differently — three rows of 45° staircase relax into two rows at 1 row
+    /// per 2 columns.
+    ///
+    /// G and H together are the whole ticket.
+    #[test]
+    fn a_submerged_forty_five_degree_slope_flattens() {
+        let mut board = staircase_fixture(Cell::Water);
+        let mut rng = SmallRng::seed_from_u64(31);
+
+        for _ in 0..100 {
+            board.step(&mut rng);
+        }
+
+        assert_eq!(
+            sand_cells(&board),
+            vec![(2, 5), (3, 5), (2, 6), (3, 6), (4, 6), (5, 6)],
+            "the submerged slope should relax to 1 row per 2 columns"
+        );
     }
 }

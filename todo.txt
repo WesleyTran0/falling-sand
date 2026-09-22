@@ -1,9 +1,8 @@
-(A) 2026-09-21 Submerged sand keeps its dry 45deg repose; pile should slump flatter under water and stop trapping water in the basin corners +feat @sim id:D3 spec:pending
-(A) 2026-09-21 Sand leaks through a one-cell-thick diagonal stone wall; try_fall diagonals never check the two orthogonal cells between source and destination +fix @sim id:B1
-(B) 2026-09-21 Water momentum: remember last flow direction in a spare CellSlot flag bit instead of re-rolling every step; requires narrowing step's blanket flag clear +feat @sim id:W1
+(A) 2026-09-21 Sand leaks through a one-cell-thick diagonal stone wall; try_fall diagonals never check the two orthogonal cells between source and destination. Must extract a shared legal-descent predicate with try_slump's look-ahead and decide deliberately whether it is FLAG_MOVED-sensitive; add a property test that a slumped grain descends next step before refactoring +fix @sim id:S1
+(A) 2026-09-21 Water surface never comes to rest; any fill that is not an exact multiple of basin width oscillates every single step forever, up to 14 cells moving, 5-cell jumps +feat @sim id:W1
 (B) 2026-09-21 Pause and single-step keys so rates and jitter can be judged frame by frame +feat @app id:A2
 (B) 2026-09-21 HUD stage two: move the panel into a dedicated strip below the board; also clear the strip each frame when hidden +feat @app id:A6
-(C) 2026-09-21 Water flows up to FLOW_DIST=5 cells in one step; replace the teleport with one cell per step if W1 alone does not fix the look +feat @sim id:W2
+(B) 2026-09-21 Water flows up to FLOW_DIST=5 cells in one step; replace the teleport with one cell per step if W1 alone does not fix the look +feat @sim id:W2
 (C) 2026-09-21 Board::render has no tests; RGBA byte order and the (y*width+x)*4 stride are asserted nowhere +feat @sim id:T2
 (C) 2026-09-21 Edge-trigger the element select keys; they still poll is_key_down every frame +review @app id:A1
 (C) 2026-09-21 Row-based upscale: build one scaled row and copy it SCALE times instead of 810k per-pixel iterations with two divides each +review @app id:A3
@@ -17,3 +16,4 @@ x 2026-09-21 2026-09-21 Housekeeping: delete cargo template add(), impl Default 
 x 2026-09-21 2026-09-21 Decide rules.rs: keep it as the home for per-element material properties, not movement code; created with content by D1 +review @sim id:H4
 x 2026-09-21 2026-09-21 RETIRED D2 sink-rate tuning: manual test confirmed sand sinks through water fine, so there is no rate to tune +feat @sim id:D2
 x 2026-09-21 2026-09-21 Painting skipped cells on a fast drag; Brush::paint_line now walks the segment between consecutive cursor samples +fix @app id:A5 commit:c308a84
+x 2026-09-21 2026-09-21 Submerged sand now slumps to ~26.6deg instead of holding the dry 45deg cone; mound 20 tall/40 wide to 14 tall/55 wide, trapped floor water 38 to 23 +feat @sim id:D3 commit:b588d92
