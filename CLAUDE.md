@@ -18,7 +18,7 @@ libs/simulation/   # the simulation library — all logic lives here, no I/O
   src/board.rs     # Board: the grid, get/set, step(), per-element movement rules
   src/brush.rs     # Brush: per-element scatter shape + density for painting
   src/render.rs    # Board::render — writes the grid into an RGBA8 buffer
-  src/rules.rs     # empty placeholder, not yet wired into lib.rs
+  src/rules.rs     # per-element material data (density); consumed by board.rs
 app/               # the binary: minifb window, input handling, nearest-neighbor upscale
   src/main.rs
 docs/              # design specs + ROADMAP.md (gitignored, local only)
@@ -38,8 +38,10 @@ RGBA byte buffer. `app` owns the window, keyboard/mouse, board size, and scale.
 - **`FLAG_MOVED`**: set on a cell after it moves so it can't move twice in one
   step; all flags are cleared at the end of `step`.
 - **Adding an element**: add a `Cell` variant, then handle it in
-  `Board::update_cell`, `brush_params`, `cell_color`, and the key bindings in
-  `main.rs`.
+  `Board::update_cell`, `rules::density`, `brush_params`, `cell_color`, and the
+  key bindings in `main.rs`. Every one of those is an exhaustive `match` with no
+  wildcard arm, so the compiler names each site you still owe — that is
+  deliberate, don't "fix" it with a `_ =>`.
 
 ## Commands
 
@@ -90,6 +92,24 @@ is never the one that reviews it:
 
 `/log-commit` handles the commit message + `logs/` entry — it's mechanical, so
 it's a command, not an agent.
+
+## Branching and PRs
+
+Work lands through pull requests, not direct commits to `main`. The point is
+that changes stay readable in segments.
+
+- One branch per ticket, named for the ticket, e.g. `submerged-repose`.
+- Push the branch and hand over a GitHub compare link
+  (`https://github.com/WesleyTran0/falling-sand/compare/<base>...<branch>?expand=1`).
+  `gh` is not installed, so the final "Create pull request" click is mine.
+- When a ticket depends on one still in review, branch off *that* branch rather
+  than `main`, and say in the PR body which PR it stacks on. Do not duplicate
+  the parent's commits into an unrelated base.
+- A PR body says what changed, why, how it was verified, and what a human still
+  needs to check by hand. The `logs/` entry for the commit already contains all
+  of this — reuse it rather than writing it twice.
+- Keep the working agreement below: a PR that changes how the sim looks or
+  feels still stops for manual testing before it is opened, not after.
 
 ## Working agreement
 
