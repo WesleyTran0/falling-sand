@@ -1,4 +1,5 @@
 use crate::cell::{Cell, CellSlot};
+use crate::rules;
 use rand::{Rng, RngExt};
 
 const FLAG_MOVED: u8 = 1 << 0;
@@ -111,8 +112,14 @@ impl Board {
     /// Attempts to move the Cell at `(x, y)` downwards. First, direclty below `(x, y)` will be
     /// tried, randomly followed by either the left and right downward diagonal.
     ///
+    /// Each candidate is first tried as a plain move into an empty slot, then as
+    /// a density displacement: a swap with a strictly less dense occupant. Both
+    /// checks happen per candidate, so a cell prefers to sink straight down
+    /// through lighter material over sliding into an empty diagonal.
+    ///
     /// Returns true if the cell moved
     fn try_fall(&mut self, x: usize, y: usize, rng: &mut impl Rng) -> bool {
+        let mover = self.grid[self.idx(x, y)].cell;
         let down_left = x.checked_sub(1).map(|nx| (nx, y + 1));
         let down_right = Some((x + 1, y + 1));
         let (dir1, dir2) = if rng.random_bool(0.5) {
@@ -127,6 +134,11 @@ impl Board {
                 let cur_idx = self.idx(x, y);
                 let dst_idx = self.idx(nx, ny);
                 self.move_cell(cur_idx, dst_idx);
+                return true;
+            } else if self.can_displace(mover, nx, ny) {
+                let cur_idx = self.idx(x, y);
+                let dst_idx = self.idx(nx, ny);
+                self.swap_cells(cur_idx, dst_idx);
                 return true;
             }
         }
@@ -173,10 +185,54 @@ impl Board {
         slot.cell == Cell::Empty && slot.flags & FLAG_MOVED == 0
     }
 
+    /// Returns true if a cell of `mover` can sink into the occupied cell at
+    /// `(nx, ny)` by swapping with it.
+    ///
+    /// Requires the destination to be in bounds, to hold a non-`Empty` cell that
+    /// has not already moved this step, and to be strictly less dense than
+    /// `mover`. The comparison is strictly greater so that same-density cells
+    /// never churn against each other. `Empty` destinations are excluded on
+    /// purpose: those are a plain move, handled by `can_move_into` / `move_cell`.
+    fn can_displace(&self, mover: Cell, nx: usize, ny: usize) -> bool {
+        if nx >= self.width || ny >= self.height {
+            return false;
+        }
+        let slot = self.grid[self.idx(nx, ny)];
+        slot.cell != Cell::Empty
+            && slot.flags & FLAG_MOVED == 0
+            && rules::density(mover) > rules::density(slot.cell)
+    }
+
     fn move_cell(&mut self, from_idx: usize, to_idx: usize) {
         self.grid[to_idx].cell = self.grid[from_idx].cell;
         self.grid[to_idx].flags |= FLAG_MOVED;
         self.grid[from_idx].cell = Cell::Empty;
+    }
+
+    /// Exchanges the cells in two slots and marks **both** as moved.
+    ///
+    /// Both slots are flagged because a swap moves the displaced cell *upward*,
+    /// into the slot the bottom-up scan is currently processing. Without the
+    /// source flag, the denser cell on the row above finds that lighter cell
+    /// unflagged and swaps with it again, so it climbs several rows in one step.
+    ///
+    /// This is why an `Empty` destination must stay on `move_cell`, which
+    /// deliberately leaves its source unflagged so the cell above can fall into
+    /// the slot just vacated.
+    ///
+    /// Only the `cell` fields are exchanged; the flags are not. That is
+    /// deliberate but currently unobservable, since `FLAG_MOVED` is the only
+    /// bit and both slots receive it either way. It stops being unobservable as
+    /// soon as a flag describes the *particle* rather than the slot — ticket
+    /// W1's momentum bit, which persists across steps. Such a bit must travel
+    /// with the cell, or displaced water would inherit the momentum of the sand
+    /// that pushed past it. Revisit this function when W1 lands.
+    fn swap_cells(&mut self, from_idx: usize, to_idx: usize) {
+        let from_cell = self.grid[from_idx].cell;
+        self.grid[from_idx].cell = self.grid[to_idx].cell;
+        self.grid[to_idx].cell = from_cell;
+        self.grid[from_idx].flags |= FLAG_MOVED;
+        self.grid[to_idx].flags |= FLAG_MOVED;
     }
 
     /// Calculates the flat index from two dimensional coordinates
@@ -534,8 +590,9 @@ mod tests {
     /// Asserted directly rather than through falling behavior: `step` scans
     /// bottom-up, so a cell that moves down always lands in an already-scanned
     /// row and is never revisited, which means no amount of sand-falling can
-    /// observe this flag. Ticket D1's `swap_cells` moves the displaced cell
-    /// *up* into the row being scanned, where it becomes load-bearing.
+    /// observe this flag. `swap_cells` is where it becomes load-bearing: a swap
+    /// moves the displaced cell *up* into the row being scanned. That case is
+    /// pinned by `displaced_water_does_not_move_twice_in_one_step`.
     #[test]
     fn move_cell_flags_the_destination() {
         let mut board = Board::new(3, 10);
@@ -647,16 +704,10 @@ mod tests {
         assert_eq!(stone, 1, "stone was duplicated");
     }
 
-    /// Pins that sand does *not* sink through water: `can_move_into` only
-    /// accepts `Cell::Empty` destinations, so denser material cannot displace
-    /// lighter material.
-    ///
-    /// This is a current limitation, not desired behavior. Ticket D1 (density
-    /// and displacement) inverts it — after D1 this same setup should end with
-    /// sand at `(1, 1)` and water at `(1, 0)` — and must replace this test with
-    /// that mirror image rather than loosen the assertion.
+    /// Pins that sand sinks through water: `can_displace` accepts a strictly
+    /// less dense occupant and `swap_cells` exchanges the two.
     #[test]
-    fn sand_does_not_yet_sink_through_water() {
+    fn sand_sinks_through_water() {
         let mut board = Board::new(3, 3);
         let mut rng = SmallRng::seed_from_u64(16);
         // Floor and walls, so the water is boxed in and can neither fall nor flow.
@@ -670,7 +721,189 @@ mod tests {
 
         board.step(&mut rng);
 
+        assert_eq!(board.get(1, 1), Some(Cell::Sand));
+        assert_eq!(board.get(1, 0), Some(Cell::Water));
+    }
+
+    /// Pins that `swap_cells` flags **both** slots, not just the destination.
+    ///
+    /// A swap pushes the displaced water *upward*, into the row the bottom-up
+    /// scan is about to reach. Without the source flag the sand at `(1, 0)`
+    /// swaps with that same water again on the same step, giving `(1, 0)` water
+    /// and `(1, 1)` sand: the water would climb two rows in one step.
+    #[test]
+    fn displaced_water_does_not_move_twice_in_one_step() {
+        let mut board = Board::new(3, 4);
+        let mut rng = SmallRng::seed_from_u64(18);
+        // Stone floor plus full side walls, so no diagonal and no sideways flow
+        // is ever legal and the coin flips cannot affect the outcome.
+        for x in 0..3 {
+            board.set(x, 3, Cell::Stone);
+        }
+        for y in 0..3 {
+            board.set(0, y, Cell::Stone);
+            board.set(2, y, Cell::Stone);
+        }
+        board.set(1, 2, Cell::Water);
+        board.set(1, 1, Cell::Sand);
+        board.set(1, 0, Cell::Sand);
+
+        board.step(&mut rng);
+
         assert_eq!(board.get(1, 0), Some(Cell::Sand));
-        assert_eq!(board.get(1, 1), Some(Cell::Water));
+        assert_eq!(
+            board.get(1, 1),
+            Some(Cell::Water),
+            "the displaced water must rise exactly one row per step"
+        );
+        assert_eq!(board.get(1, 2), Some(Cell::Sand));
+    }
+
+    /// Pins that displacement applies to the downward diagonals too, not just
+    /// straight down.
+    #[test]
+    fn sand_displaces_water_diagonally() {
+        let mut board = Board::new(3, 3);
+        let mut rng = SmallRng::seed_from_u64(19);
+        for x in 0..3 {
+            board.set(x, 2, Cell::Stone);
+        }
+        // Straight down and down-left are stone, so down-right is the only legal
+        // candidate whichever way the coin lands.
+        board.set(1, 1, Cell::Stone);
+        board.set(0, 1, Cell::Stone);
+        board.set(2, 1, Cell::Water);
+        board.set(1, 0, Cell::Sand);
+
+        board.step(&mut rng);
+
+        assert_eq!(board.get(2, 1), Some(Cell::Sand));
+        assert_eq!(board.get(1, 0), Some(Cell::Water));
+    }
+
+    /// Pins the `u8::MAX` density sentinel on stone: nothing can be strictly
+    /// denser, so stone is never displaced.
+    #[test]
+    fn sand_does_not_displace_stone() {
+        let mut board = Board::new(3, 3);
+        let mut rng = SmallRng::seed_from_u64(20);
+        // Boxed in: every downward candidate is stone.
+        board.set(0, 1, Cell::Stone);
+        board.set(1, 1, Cell::Stone);
+        board.set(2, 1, Cell::Stone);
+        board.set(1, 0, Cell::Sand);
+
+        board.step(&mut rng);
+
+        assert_eq!(board.get(1, 0), Some(Cell::Sand));
+        assert_eq!(board.get(1, 1), Some(Cell::Stone));
+    }
+
+    /// Pins the *direction* of the density comparison: lighter material never
+    /// sinks through heavier material.
+    #[test]
+    fn water_does_not_displace_sand() {
+        let mut board = Board::new(3, 3);
+        let mut rng = SmallRng::seed_from_u64(21);
+        for x in 0..3 {
+            board.set(x, 2, Cell::Stone);
+        }
+        board.set(0, 1, Cell::Stone);
+        board.set(2, 1, Cell::Stone);
+        board.set(1, 1, Cell::Sand);
+        // Walls beside the water too, so it cannot flow sideways either.
+        board.set(0, 0, Cell::Stone);
+        board.set(2, 0, Cell::Stone);
+        board.set(1, 0, Cell::Water);
+
+        board.step(&mut rng);
+
+        assert_eq!(board.get(1, 0), Some(Cell::Water));
+        assert_eq!(board.get(1, 1), Some(Cell::Sand));
+    }
+
+    /// Pins that the density comparison is strictly `>`: equal densities do not
+    /// swap.
+    ///
+    /// A sand/sand swap is invisible in the cell values, so `FLAG_MOVED` is the
+    /// only observable. That is why this calls `update_cell` directly instead of
+    /// `step`, which clears every flag before returning.
+    #[test]
+    fn same_density_cells_do_not_swap() {
+        let mut board = Board::new(3, 3);
+        let mut rng = SmallRng::seed_from_u64(22);
+        // Boxed in, so the only candidate that is not stone is the sand below.
+        board.set(0, 1, Cell::Stone);
+        board.set(2, 1, Cell::Stone);
+        board.set(1, 1, Cell::Sand);
+        board.set(1, 0, Cell::Sand);
+
+        board.update_cell(1, 0, &mut rng);
+
+        let upper = board.idx(1, 0);
+        let lower = board.idx(1, 1);
+        assert_eq!(board.get(1, 0), Some(Cell::Sand));
+        assert_eq!(board.get(1, 1), Some(Cell::Sand));
+        assert_eq!(
+            board.grid[upper].flags & FLAG_MOVED,
+            0,
+            "sand must not swap with equally dense sand"
+        );
+        assert_eq!(
+            board.grid[lower].flags & FLAG_MOVED,
+            0,
+            "sand must not swap with equally dense sand"
+        );
+    }
+
+    /// The ticket's headline behavior end to end: sand poured on water ends up
+    /// underneath it, and the settled stack is then static.
+    #[test]
+    fn sand_settles_below_water_over_many_steps() {
+        let mut board = Board::new(3, 10);
+        let mut rng = SmallRng::seed_from_u64(23);
+        // Full side walls and a floor: the interior is a one-cell-wide column
+        // with no lateral freedom at all, so the coin flips cannot matter.
+        for y in 0..10 {
+            board.set(0, y, Cell::Stone);
+            board.set(2, y, Cell::Stone);
+        }
+        for x in 0..3 {
+            board.set(x, 9, Cell::Stone);
+        }
+        board.set(1, 6, Cell::Water);
+        board.set(1, 7, Cell::Water);
+        board.set(1, 8, Cell::Water);
+        board.set(1, 4, Cell::Sand);
+        board.set(1, 5, Cell::Sand);
+
+        for _ in 0..20 {
+            board.step(&mut rng);
+        }
+
+        let column: Vec<Option<Cell>> = (0..10).map(|y| board.get(1, y)).collect();
+        assert_eq!(
+            column,
+            vec![
+                Some(Cell::Empty),
+                Some(Cell::Empty),
+                Some(Cell::Empty),
+                Some(Cell::Empty),
+                Some(Cell::Water),
+                Some(Cell::Water),
+                Some(Cell::Water),
+                Some(Cell::Sand),
+                Some(Cell::Sand),
+                Some(Cell::Stone),
+            ]
+        );
+
+        // A settled stack must be static, not churning: water above sand can
+        // never displace it.
+        for _ in 0..20 {
+            board.step(&mut rng);
+        }
+        let settled: Vec<Option<Cell>> = (0..10).map(|y| board.get(1, y)).collect();
+        assert_eq!(settled, column, "a settled stack must not keep moving");
     }
 }
